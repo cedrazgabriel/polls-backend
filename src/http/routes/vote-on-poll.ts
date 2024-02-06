@@ -1,6 +1,7 @@
 import { z } from "zod"
-import { prisma } from "../../lib/prisma"
+import { randomUUID } from "node:crypto"
 import { FastifyInstance } from "fastify"
+import { prisma } from "../../lib/prisma"
 
 export async function voteOnPoll(app: FastifyInstance) {
 
@@ -16,6 +17,54 @@ export async function voteOnPoll(app: FastifyInstance) {
 
         const { pollId } = voteOnPollParams.parse(request.params)
         const { pollOptionId } = voteOnPollBody.parse(request.body)
+
+        let { sessionId } = request.cookies
+
+        if (sessionId) {
+            const userPreviousVoteOnPoll = await prisma.vote.findUnique({
+                where: {
+                    sessionId_pollId: {
+                        sessionId,
+                        pollId
+                    }
+                }
+            })
+
+            if (userPreviousVoteOnPoll && userPreviousVoteOnPoll.pollOptionId === pollOptionId) {
+                return reply.status(400).send({
+                    message: 'You have already voted for this option'
+                })
+            }
+
+            if (userPreviousVoteOnPoll && userPreviousVoteOnPoll.pollOptionId !== pollOptionId) {
+                await prisma.vote.delete({
+                    where: {
+                        id: userPreviousVoteOnPoll.id
+                    }
+                })
+            }
+        }
+
+        if (!sessionId) {
+            console.log('No session id found, creating a new one')
+            sessionId = randomUUID()
+
+            reply.setCookie('sessionId', sessionId, {
+                path: '/',
+                maxAge: 60 * 60 * 24 * 30, // 30 days,
+                signed: true,
+                httpOnly: true,
+            })
+        }
+
+        await prisma.vote.create({
+            data: {
+                sessionId,
+                pollId,
+                pollOptionId
+            }
+        })
+
 
         return reply.status(201).send()
     })
